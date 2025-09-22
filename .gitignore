@@ -46,4 +46,8 @@ build/
 
 bin/
 
+build/
+
 *.user
+
+x64
