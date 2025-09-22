@@ -59,3 +59,14 @@ void TitleFps()
     }
 }
 
+void MakeWindowFullScreen() 
+{
+    const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor);
+    glfwSetWindowMonitor(pWindow, pMonitor, 0, 0, pMode->width, pMode->height, pMode->refreshRate);
+}
+
+void MakeWindowWindowed(VkOffset2D position, VkExtent2D size) 
+{
+    const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor);
+    glfwSetWindowMonitor(pWindow, nullptr, position.x, position.y, size.width, size.height, pMode->refreshRate);
+}
