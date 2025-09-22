@@ -41,3 +41,9 @@
 *.dwo
 
 build/
+
+.vs/
+
+bin/
+
+*.user
