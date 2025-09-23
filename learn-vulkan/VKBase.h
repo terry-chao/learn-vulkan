@@ -3,6 +3,9 @@
 //定义vulkan命名空间，之后会把Vulkan中一些基本对象的封装写在其中
 namespace vulkan 
 {
+    //全局常量用constexpr修饰定义在类外：
+    constexpr VkExtent2D defaultWindowSize = { 1280, 720 };
+
     class graphicsBase {
         uint32_t apiVersion = VK_API_VERSION_1_0;
         VkInstance instance;
@@ -39,12 +42,14 @@ namespace vulkan
         //--------------------
         graphicsBase() = default;
         graphicsBase(graphicsBase&&) = delete;
-        ~graphicsBase() {
-            /*待Ch1-4填充*/
-        }
         //Non - const函数
         VkResult CreateSwapchain_Internal() {
-            /*待Ch1-4填充*/
+            VkResult result = VkResult::VK_SUCCESS;
+            if (VkResult result = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain)) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a swapchain!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            return result;
         }
         VkResult GetQueueFamilyIndices(VkPhysicalDevice physicalDevice, bool enableGraphicsQueue, bool enableComputeQueue, uint32_t(&queueFamilyIndices)[3]) {
             uint32_t queueFamilyCount = 0;
@@ -458,19 +463,57 @@ namespace vulkan
             vkGetPhysicalDeviceMemoryProperties(physicalDevice, &physicalDeviceMemoryProperties);
             //输出所用的物理设备名称
             std::cout << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
-            /*待Ch1-4填充*/
+            
+            std::cout << std::format("Renderer: {}\n", physicalDeviceProperties.deviceName);
+            ExecuteCallbacks(callbacks_createDevice);
+
             return VK_SUCCESS;
         }
         VkResult GetSurfaceFormats() {
-            /*待Ch1-4填充*/
+            uint32_t surfaceFormatCount;
+            if (VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, nullptr)) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface formats!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            if (!surfaceFormatCount)
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any supported surface format!\n"),
+                abort();
+            availableSurfaceFormats.resize(surfaceFormatCount);
+            VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &surfaceFormatCount, availableSurfaceFormats.data());
+            if (result)
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface formats!\nError code: {}\n", int32_t(result));
+            return result;
         }
         VkResult SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat) {
-            /*待Ch1-4填充*/
+            bool formatIsAvailable = false;
+            if (!surfaceFormat.format) {
+                //如果格式未指定，只匹配色彩空间，图像格式有啥就用啥
+                for (auto& i : availableSurfaceFormats)
+                    if (i.colorSpace == surfaceFormat.colorSpace) {
+                        swapchainCreateInfo.imageFormat = i.format;
+                        swapchainCreateInfo.imageColorSpace = i.colorSpace;
+                        formatIsAvailable = true;
+                        break;
+                    }
+            }
+            else
+                //否则匹配格式和色彩空间
+                for (auto& i : availableSurfaceFormats)
+                    if (i.format == surfaceFormat.format &&
+                        i.colorSpace == surfaceFormat.colorSpace) {
+                        swapchainCreateInfo.imageFormat = i.format;
+                        swapchainCreateInfo.imageColorSpace = i.colorSpace;
+                        formatIsAvailable = true;
+                        break;
+                    }
+            //如果没有符合的格式，恰好有个语义相符的错误代码
+            if (!formatIsAvailable)
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            //如果交换链已存在，调用RecreateSwapchain()重建交换链
+            if (swapchain)
+                return RecreateSwapchain();
+            return VK_SUCCESS;
         }
-        VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0) {
-            /*待Ch1-4填充*/
-        }
-
         void InstanceLayers(const std::vector<const char*>& layerNames) {
             instanceLayers = layerNames;
         }
@@ -481,9 +524,232 @@ namespace vulkan
             deviceExtensions = extensionNames;
         }
 
-        VkResult RecreateSwapchain() {
-            /*待Ch1-4填充*/
+        VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0) {
+            //VkSurfaceCapabilitiesKHR相关的参数
+
+            VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+            if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities)) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            //指定图像数量
+            swapchainCreateInfo.minImageCount = surfaceCapabilities.minImageCount + (surfaceCapabilities.maxImageCount > surfaceCapabilities.minImageCount);
+            //指定图像大小
+            swapchainCreateInfo.imageExtent =
+                surfaceCapabilities.currentExtent.width == -1 ?
+                VkExtent2D{
+                    glm::clamp(defaultWindowSize.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width),
+                    glm::clamp(defaultWindowSize.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height) } :
+                    surfaceCapabilities.currentExtent;
+            //swapchainCreateInfo.imageArrayLayers = 1; //跟其他不需要判断的参数一起扔后面去
+            //指定变换方式
+            swapchainCreateInfo.preTransform = surfaceCapabilities.currentTransform;
+            //指定处理透明通道的方式
+            if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR)
+                swapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+            else
+                for (size_t i = 0; i < 4; i++)
+                    if (surfaceCapabilities.supportedCompositeAlpha & 1 << i) {
+                        swapchainCreateInfo.compositeAlpha = VkCompositeAlphaFlagBitsKHR(surfaceCapabilities.supportedCompositeAlpha & 1 << i);
+                        break;
+                    }
+
+            //指定图像用途
+            swapchainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            if (surfaceCapabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            else
+                std::cout << std::format("[ graphicsBase ] WARNING\nVK_IMAGE_USAGE_TRANSFER_DST_BIT isn't supported!\n");
+
+            //指定图像格式
+            if (!availableSurfaceFormats.size())
+                if (VkResult result = GetSurfaceFormats())
+                    return result;
+
+            if (!swapchainCreateInfo.imageFormat)
+                //用&&操作符来短路执行
+                if (SetSurfaceFormat({ VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR }) &&
+                    SetSurfaceFormat({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })) {
+                    //如果找不到上述图像格式和色彩空间的组合，那只能有什么用什么，采用availableSurfaceFormats中的第一组
+                    swapchainCreateInfo.imageFormat = availableSurfaceFormats[0].format;
+                    swapchainCreateInfo.imageColorSpace = availableSurfaceFormats[0].colorSpace;
+                    std::cout << std::format("[ graphicsBase ] WARNING\nFailed to select a four-component UNORM surface format!\n");
+                }
+
+            //指定呈现模式
+            uint32_t surfacePresentModeCount;
+            if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, nullptr)) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get the count of surface present modes!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            if (!surfacePresentModeCount)
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to find any surface present mode!\n"),
+                abort();
+            std::vector<VkPresentModeKHR> surfacePresentModes(surfacePresentModeCount);
+            if (VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &surfacePresentModeCount, surfacePresentModes.data())) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get surface present modes!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            swapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+            if (!limitFrameRate)
+                for (size_t i = 0; i < surfacePresentModeCount; i++)
+                    if (surfacePresentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+                        swapchainCreateInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+                        break;
+                    }
+
+            //剩余参数
+            swapchainCreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+            swapchainCreateInfo.flags = flags;
+            swapchainCreateInfo.surface = surface;
+            swapchainCreateInfo.imageArrayLayers = 1;
+            swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            swapchainCreateInfo.clipped = VK_TRUE;
+
+            //创建交换链
+            if (VkResult result = CreateSwapchain_Internal())
+                return result;
+            //执行回调函数，ExecuteCallbacks(...)见后文
+            ExecuteCallbacks(callbacks_createSwapchain);
+            return VK_SUCCESS;
         }
+
+        VkResult RecreateSwapchain() {
+            VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+            if (VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCapabilities)) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to get physical device surface capabilities!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            if (surfaceCapabilities.currentExtent.width == 0 ||
+                surfaceCapabilities.currentExtent.height == 0)
+                return VK_SUBOPTIMAL_KHR;
+            swapchainCreateInfo.imageExtent = surfaceCapabilities.currentExtent;
+            swapchainCreateInfo.oldSwapchain = swapchain;
+            VkResult result = vkQueueWaitIdle(queue_graphics);
+            if (result == VK_SUCCESS &&
+                queue_graphics != queue_presentation)
+                result = vkQueueWaitIdle(queue_presentation);
+            if (result) {
+                std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the queue to be idle!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+            //销毁旧交换链相关对象
+            ExecuteCallbacks(callbacks_destroySwapchain);
+            for (auto& i : swapchainImageViews)
+                if (i)
+                    vkDestroyImageView(device, i, nullptr);
+            swapchainImageViews.resize(0);
+            //创建新交换链及与之相关的对象
+            if (VkResult result = CreateSwapchain_Internal())
+                return result;
+            //执行回调函数，ExecuteCallbacks(...)见后文
+            //ExecuteCallbacks(callbacks_createSwapchain);
+            return VK_SUCCESS;
+        }
+
+
+        /*...省略管线对象的定义*/
+        void PreInitialization_UseDeferredRendering() {
+            //static bool executed = false;
+            //if (executed)
+            //    return;
+            ///*...省略一堆声明为静态变量的相关Vulkan对象（着色器、管线布局等）*/
+            //auto CreateDeferredRenderingPipeline = [] { /*...*/ };
+            //auto DestroyDeferredRenderingPipeline = [] { /*...*/ };
+            //callbacks_createSwapchain.push_back(InitializeDeferredRendering);
+            //callbacks_destroySwapchain.push_back(UninitializeDeferredRendering);
+        }
+        private:
+            std::vector<void(*)()> callbacks_createDevice;
+            std::vector<void(*)()> callbacks_destroyDevice;
+
+        public:
+            void AddCallback_CreateDevice(void(*function)()) {
+                callbacks_createDevice.push_back(function);
+            }
+            void AddCallback_DestroyDevice(void(*function)()) {
+                callbacks_destroyDevice.push_back(function);
+            }
+
+        private:
+
+            std::vector<void(*)()> callbacks_createSwapchain;
+            std::vector<void(*)()> callbacks_destroySwapchain;
+
+            static void ExecuteCallbacks(std::vector<void(*)()> callbacks) {
+                for (size_t size = callbacks.size(), i = 0; i < size; i++)
+                    callbacks[i]();
+            }
+        public:
+            VkResult WaitIdle() const {
+                VkResult result = vkDeviceWaitIdle(device);
+                if (result)
+                    std::cout << std::format("[ graphicsBase ] ERROR\nFailed to wait for the device to be idle!\nError code: {}\n", int32_t(result));
+                return result;
+            }
+
+        public:
+            VkResult RecreateDevice(VkDeviceCreateFlags flags = 0) {
+                if (device) {
+                    if (VkResult result = WaitIdle();
+                        result != VK_SUCCESS &&
+                        result != VK_ERROR_DEVICE_LOST)
+                        if (swapchain) {
+                            ExecuteCallbacks(callbacks_destroySwapchain);
+                            for (auto& i : swapchainImageViews)
+                                if (i)
+                                    vkDestroyImageView(device, i, nullptr);
+                            swapchainImageViews.resize(0);
+                            vkDestroySwapchainKHR(device, swapchain, nullptr);
+                            swapchain = VK_NULL_HANDLE;
+                            swapchainCreateInfo = {};
+                        }
+                    ExecuteCallbacks(callbacks_destroyDevice);
+                    vkDestroyDevice(device, nullptr);
+                    device = VK_NULL_HANDLE;
+                }
+                return CreateDevice(flags);
+            }
+            ~graphicsBase() {
+                if (!instance)
+                    return;
+                if (device) {
+                    WaitIdle();
+                    if (swapchain) {
+                        ExecuteCallbacks(callbacks_destroySwapchain);
+                        for (auto& i : swapchainImageViews)
+                            if (i)
+                                vkDestroyImageView(device, i, nullptr);
+                        vkDestroySwapchainKHR(device, swapchain, nullptr);
+                    }
+                    ExecuteCallbacks(callbacks_destroyDevice);
+                    vkDestroyDevice(device, nullptr);
+                }
+                if (surface)
+                    vkDestroySurfaceKHR(instance, surface, nullptr);
+                if (debugMessenger) {
+                    PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessenger =
+                        reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
+                    if (vkDestroyDebugUtilsMessenger)
+                        vkDestroyDebugUtilsMessenger(instance, debugMessenger, nullptr);
+                }
+                vkDestroyInstance(instance, nullptr);
+            }
+        public:
+            void Terminate() {
+                this->~graphicsBase();
+                instance = VK_NULL_HANDLE;
+                physicalDevice = VK_NULL_HANDLE;
+                device = VK_NULL_HANDLE;
+                surface = VK_NULL_HANDLE;
+                swapchain = VK_NULL_HANDLE;
+                swapchainImages.resize(0);
+                swapchainImageViews.resize(0);
+                swapchainCreateInfo = {};
+                debugMessenger = VK_NULL_HANDLE;
+            }
         //静态函数
         static graphicsBase& Base() {
             return singleton;

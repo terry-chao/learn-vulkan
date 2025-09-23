@@ -74,12 +74,16 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
         return false;
     //----------------------------------------
 
-    /*待Ch1-4填充*/
+    //本节新增--------------------------------
+    if (graphicsBase::Base().CreateSwapchain(limitFrameRate))
+        return false;
+    //----------------------------------------
     return true;
 }
 
 void TerminateWindow() 
 {
+    graphicsBase::Base().WaitIdle();
     /*待Ch1-4填充*/
     glfwTerminate();
 }
